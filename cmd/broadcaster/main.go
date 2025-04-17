@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strconv"
 	"sync"
 	"time"
 
@@ -44,6 +45,7 @@ func (p *Pool) Start() {
 type Broadcaster struct {
 	poolLock sync.Mutex
 	pools    []*Pool
+	poolSize int
 }
 
 func (b *Broadcaster) Add(c *fastws.Conn) {
@@ -52,7 +54,7 @@ func (b *Broadcaster) Add(c *fastws.Conn) {
 
 	for idx, pool := range b.pools {
 		pool.lck.Lock()
-		if len(pool.cs) < 200 {
+		if len(pool.cs) < b.poolSize {
 			pool.cs = append(pool.cs, c)
 			pool.lck.Unlock()
 			fmt.Printf("Added to pool %d, size %d\n", idx, len(pool.cs))
@@ -71,7 +73,12 @@ func (b *Broadcaster) Add(c *fastws.Conn) {
 }
 
 func main() {
-	b := &Broadcaster{}
+	size, err := strconv.Atoi(os.Args[0])
+	if err != nil {
+		fmt.Printf("args should be int: %s\n", err)
+		os.Exit(1)
+	}
+	b := &Broadcaster{poolSize: size}
 
 	router := fasthttprouter.New()
 	router.GET("/stream", fastws.Upgrade(func(c *fastws.Conn) {
