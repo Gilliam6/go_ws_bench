@@ -73,7 +73,7 @@ func (b *Broadcaster) Add(c *fastws.Conn) {
 }
 
 func main() {
-	size, err := strconv.Atoi(os.Args[0])
+	size, err := strconv.Atoi(os.Args[1])
 	if err != nil {
 		fmt.Printf("args should be int: %s\n", err)
 		os.Exit(1)
