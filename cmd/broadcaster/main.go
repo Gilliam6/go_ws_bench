@@ -24,10 +24,10 @@ type Pool struct {
 func (p *Pool) Start() {
 	ticker := time.NewTicker(40 * time.Millisecond)
 	defer ticker.Stop()
-	var now time.Time
+	//var now time.Time
 	for range ticker.C {
 		p.lck.Lock()
-		now = time.Now()
+		//now = time.Now()
 		for i := 0; i < len(p.cs); {
 			c := p.cs[i]
 			if _, err := c.WriteMessage(fastws.ModeBinary, payload); err != nil {
@@ -37,7 +37,7 @@ func (p *Pool) Start() {
 				i++
 			}
 		}
-		fmt.Printf("Pool %d: elapsed time %v\n", p.id, time.Since(now))
+		//fmt.Printf("Pool %d: elapsed time %v\n", p.id, time.Since(now))
 		p.lck.Unlock()
 	}
 }
