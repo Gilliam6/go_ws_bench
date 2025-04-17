@@ -2,78 +2,101 @@ package main
 
 import (
 	"fmt"
-	"github.com/buaazp/fasthttprouter"
-	"github.com/dgrr/fastws"
-	"github.com/valyala/fasthttp"
 	"os"
 	"os/signal"
 	"sync"
 	"time"
+
+	"github.com/buaazp/fasthttprouter"
+	"github.com/dgrr/fastws"
+	"github.com/valyala/fasthttp"
 )
 
 var payload = make([]byte, 12500)
 
-type Broadcaster struct {
+type Pool struct {
+	id  int
 	lck sync.Mutex
 	cs  []*fastws.Conn
 }
 
-func (b *Broadcaster) Add(c *fastws.Conn) {
-	b.lck.Lock()
-	b.cs = append(b.cs, c)
-	fmt.Println(len(b.cs))
-	b.lck.Unlock()
-}
-
-func (b *Broadcaster) Start() {
-	ticker := time.NewTicker(time.Millisecond * 40)
+func (p *Pool) Start() {
+	ticker := time.NewTicker(40 * time.Millisecond)
 	defer ticker.Stop()
-	for {
-		b.lck.Lock()
-		now := time.Now()
-		for i := 0; i < len(b.cs); i++ {
-			c := b.cs[i]
-			_, err := c.WriteMessage(fastws.ModeBinary, payload)
-			if err != nil {
-				b.cs = append(b.cs[:i], b.cs[i+1:]...)
-				fmt.Println(err)
-				fmt.Println(len(b.cs))
-				continue
+	var now time.Time
+	for range ticker.C {
+		p.lck.Lock()
+		now = time.Now()
+		for i := 0; i < len(p.cs); {
+			c := p.cs[i]
+			if _, err := c.WriteMessage(fastws.ModeBinary, payload); err != nil {
+				p.cs = append(p.cs[:i], p.cs[i+1:]...)
+				fmt.Printf("Pool %d: removed conn, left %d\n", p.id, len(p.cs))
+			} else {
+				i++
 			}
 		}
-		fmt.Println("elapsed time:", time.Since(now))
-		b.lck.Unlock()
-
-		<-ticker.C
+		fmt.Printf("Pool %d: elapsed time %v\n", p.id, time.Since(now))
+		p.lck.Unlock()
 	}
+}
+
+type Broadcaster struct {
+	poolLock sync.Mutex
+	pools    []*Pool
+}
+
+func (b *Broadcaster) Add(c *fastws.Conn) {
+	b.poolLock.Lock()
+	defer b.poolLock.Unlock()
+
+	for idx, pool := range b.pools {
+		pool.lck.Lock()
+		if len(pool.cs) < 200 {
+			pool.cs = append(pool.cs, c)
+			pool.lck.Unlock()
+			fmt.Printf("Added to pool %d, size %d\n", idx, len(pool.cs))
+			return
+		}
+		pool.lck.Unlock()
+	}
+
+	pid := len(b.pools)
+	newPool := &Pool{id: pid, cs: make([]*fastws.Conn, 0, 50)}
+	newPool.cs = append(newPool.cs, c)
+	b.pools = append(b.pools, newPool)
+	fmt.Printf("Created pool %d, size %d\n", pid, len(newPool.cs))
+
+	go newPool.Start()
 }
 
 func main() {
 	b := &Broadcaster{}
+
 	router := fasthttprouter.New()
 	router.GET("/stream", fastws.Upgrade(func(c *fastws.Conn) {
-		b.Add(c)
 		c.ReadTimeout = 0
+		b.Add(c)
 		for {
-			_, _, err := c.ReadMessage(nil)
-			if err != nil {
+			if _, _, err := c.ReadMessage(nil); err != nil {
 				return
 			}
 		}
 	}))
-	go b.Start()
 
-	server := fasthttp.Server{
-		Handler: router.Handler,
-	}
-	go server.ListenAndServe(":4242")
+	server := fasthttp.Server{Handler: router.Handler}
+
+	go func() {
+		if err := server.ListenAndServe(":4242"); err != nil {
+			fmt.Println("Server error:", err)
+		}
+	}()
 
 	fmt.Println("Visit http://localhost:4242")
 
-	sigCh := make(chan os.Signal)
+	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt)
 	<-sigCh
-	signal.Stop(sigCh)
-	signal.Reset(os.Interrupt)
+
 	server.Shutdown()
 }
